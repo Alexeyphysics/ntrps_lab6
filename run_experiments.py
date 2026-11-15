@@ -2,7 +2,6 @@
 
 Лабораторная работа №6 по курсу «Новые технологии в РПС».
 Выполнил: студент Кондратенко А.С. (гр. M_PIN_RIS_2607)
-Фиксирует результаты в logs/experiments.log и reports/hyperparameters_report.txt.
 """
 
 from __future__ import annotations
@@ -11,8 +10,6 @@ import logging
 from pathlib import Path
 import time
 from typing import Any, Dict, List, Optional
-
-import pandas as pd
 
 from ml_service import (
     create_ml_pipeline,
@@ -24,7 +21,9 @@ from ml_service import (
 from text_preprocessing import prepare_ml_dataframe
 
 
-def setup_logger(log_file: Path | str = "logs/experiments.log") -> logging.Logger:
+def setup_logger(
+    log_file: Path | str = "logs/experiments.log",
+) -> logging.Logger:
     """Настраивает логгер для записи в файл и консоль."""
     log_path = Path(log_file)
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -109,13 +108,14 @@ def write_text_report(
     """Формирует текстовый отчет по итогам экспериментов и влиянию."""
     out_file = Path(report_path)
     out_file.parent.mkdir(parents=True, exist_ok=True)
+    sep = "=" * 68
 
     lines = [
-        "====================================================================",
+        sep,
         "ОТЧЁТ ПО ЭКСПЕРИМЕНТАМ С ГИПЕРПАРАМЕТРАМИ (ЛР6, Вариант 9)",
         "Студент: Кондратенко А.С. (гр. M_PIN_RIS_2607)",
         "Модель: Pipeline(TfidfVectorizer + RandomForestClassifier)",
-        "====================================================================\n",
+        f"{sep}\n",
         "1. СВОДНАЯ ТАБЛИЦА РЕЗУЛЬТАТОВ ЭКСПЕРИМЕНТОВ:\n",
         f"{'Эксперимент':<30} | {'Val Acc':<8} | {'Val F1':<8} | "
         f"{'Demo Acc':<8} | {'Demo F1':<8} | {'Время(с)'}",
@@ -130,7 +130,7 @@ def write_text_report(
         )
 
     lines.extend([
-        "\n====================================================================",
+        f"\n{sep}",
         f"2. ЛУЧШАЯ МОДЕЛЬ: {best_exp['name']}",
         f"   Параметры: n_estimators={best_exp['n_estimators']}, "
         f"max_depth={best_exp['max_depth']}, "
@@ -141,51 +141,38 @@ def write_text_report(
         f"F1={best_exp['demo_f1']:.4f}",
         "\n--- Classification Report на демонстрационной выборке ---",
         best_demo_report,
-        "====================================================================",
+        sep,
         "3. АНАЛИЗ ВЛИЯНИЯ ГИПЕРПАРАМЕТРОВ НА РЕЗУЛЬТАТ:",
         "",
         "а) n_estimators (количество деревьев в ансамбле):",
         "   - При малом значении (10) ансамбль имеет высокую дисперсию "
-        "(недообучение),",
-        "     точность нестабильна, так как решений мало.",
-        "   - Увеличение до 100-300 снижает разброс предсказаний за счет "
-        "усреднения,",
-        "     повышает обобщающую способность, но пропорционально увеличивает",
-        "     время обучения.",
+        "(недообучение), точность падает.",
+        "   - Увеличение до 300 снижает разброс предсказаний за счет "
+        "усреднения, повышает качество, но увеличивает время обучения.",
         "",
         "б) max_depth (максимальная глубина деревьев):",
         "   - Сильное ограничение (max_depth=5) не дает деревьям уловить "
-        "сложные",
-        "     комбинации TF-IDF признаков (недообучение, низкая точность).",
-        "   - Увеличение до 20 или None позволяет формировать глубокие правила",
-        "     для разреженных текстовых векторов, однако при None возрастает "
-        "риск",
-        "     переобучения на тренировочных данных.",
+        "комбинации TF-IDF признаков (недообучение).",
+        "   - Увеличение до 20 или None позволяет строить глубокие правила "
+        "для разреженных текстовых векторов.",
         "",
         "в) min_samples_split (минимум примеров для расщепления узла):",
-        "   - Значение по умолчанию (2) позволяет строить максимально "
-        "детальные листья.",
-        "   - Увеличение порога до 5 и 15 выступает в роли регуляризатора: "
-        "деревья",
-        "     перестают дробиться на единичные шумовые слова, что может "
-        "улучшить",
-        "     устойчивость на тестовой выборке или немного снизить точность "
-        "при",
-        "     излишней регуляризации (15) на малом объеме данных (234 отзыва).",
+        "   - Порог 2 позволяет строить детальные листья.",
+        "   - Увеличение порога до 15 выступает в роли сильного "
+        "регуляризатора, снижая точность на небольшой выборке (234 отзыва).",
     ])
 
     out_file.write_text("\n".join(lines), encoding="utf-8")
 
 
 def run_all_experiments() -> None:
-    """Основной пайплайн проведения экспериментов, логирования и сохранения."""
+    """Основной пайплайн проведения экспериментов и сохранения модели."""
     logger = setup_logger("logs/experiments.log")
     logger.info("=== Старт серии экспериментов (ЛР6, Вариант 9) ===")
 
     df = prepare_ml_dataframe("dataset")
     train_df, val_df, demo_df = split_dataset_three_way(df)
 
-    # Сохраняем выборки на диск для последующей проверки через GUI
     data_dir = Path("data")
     data_dir.mkdir(parents=True, exist_ok=True)
     train_df.to_csv(data_dir / "train_split.csv", index=False)
@@ -235,7 +222,6 @@ def run_all_experiments() -> None:
             f"Time={elapsed:.3f}s"
         )
 
-        # Отбор лучшей модели строго по валидационной выборке
         if val_res["f1_weighted"] > best_score:
             best_score = val_res["f1_weighted"]
             best_exp = record
@@ -250,9 +236,7 @@ def run_all_experiments() -> None:
         )
 
     write_text_report(results, best_exp, best_demo_report)
-    logger.info(
-        "Аналитический отчет сохранен в reports/hyperparameters_report.txt"
-    )
+    logger.info("Отчет сохранен в reports/hyperparameters_report.txt")
     logger.info("=== Эксперименты успешно завершены ===")
 
 

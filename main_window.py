@@ -1,6 +1,6 @@
 """Главное графическое окно приложения (PySide6 / Qt6).
 
-Лабораторная работа №5 по курсу «Новые технологии в РПС».
+Лабораторная работа №6 по курсу «Новые технологии в РПС».
 Выполнил: студент Кондратенко А.С. (гр. M_PIN_RIS_2607)
 """
 
@@ -8,8 +8,9 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
-from typing import Dict
+from typing import Any, Dict, Optional
 
+import pandas as pd
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
@@ -40,20 +41,25 @@ from eda_service import (
     get_top_lemmas_by_class,
     load_dataset_dataframe,
 )
+from ml_service import (
+    evaluate_model,
+    load_model,
+    predict_single_review,
+)
 from review_iterator import ReviewIterator
 from scraper_service import scrape_reviews_batch
 
 
 class MainWindow(QMainWindow):
-    """Главное окно приложения с вкладками управления, просмотра и EDA."""
+    """Главное окно приложения с 4 вкладками функционала ЛР1–ЛР6."""
 
     def __init__(self) -> None:
-        """Инициализация компонентов окна."""
+        """Инициализация компонентов и автозагрузка лучшей модели."""
         super().__init__()
         self.setWindowTitle(
-            "Аналитическая система отзывов - ЛР5 (Кондратенко А.С.)"
+            "ML-классификатор отзывов - ЛР6 (Кондратенко А.С.)"
         )
-        self.setMinimumSize(950, 750)
+        self.setMinimumSize(980, 780)
 
         default_dir = Path("dataset").resolve()
         self.current_dataset_dir: Path = (
@@ -62,6 +68,17 @@ class MainWindow(QMainWindow):
 
         self.iterators: Dict[str, ReviewIterator] = {}
         self._init_iterators()
+
+        self.ml_model: Optional[Any] = None
+        self.model_path_str: str = "Модель не загружена"
+        default_model = Path("models/best_model.joblib")
+        if default_model.exists():
+            try:
+                self.ml_model = load_model(default_model)
+                self.model_path_str = str(default_model.resolve())
+            except Exception:
+                pass
+
         self._init_ui()
 
     def _init_iterators(self) -> None:
@@ -72,7 +89,7 @@ class MainWindow(QMainWindow):
         }
 
     def _init_ui(self) -> None:
-        """Настройка интерфейса с вкладками QTabWidget."""
+        """Настройка интерфейса с 4 вкладками QTabWidget."""
         central_widget = QWidget(self)
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
@@ -93,15 +110,19 @@ class MainWindow(QMainWindow):
 
         self.tab_dataset = QWidget()
         self._setup_dataset_tab(self.tab_dataset)
-        self.tabs.addTab(self.tab_dataset, "1. Датасет и Скрейпинг (ЛР1-2)")
+        self.tabs.addTab(self.tab_dataset, "1. Датасет (ЛР1-2)")
 
         self.tab_viewer = QWidget()
         self._setup_viewer_tab(self.tab_viewer)
-        self.tabs.addTab(self.tab_viewer, "2. Просмотр отзывов (ЛР3)")
+        self.tabs.addTab(self.tab_viewer, "2. Итератор (ЛР3)")
 
         self.tab_eda = QWidget()
         self._setup_eda_tab(self.tab_eda)
-        self.tabs.addTab(self.tab_eda, "3. Анализ и Графики (ЛР4)")
+        self.tabs.addTab(self.tab_eda, "3. Анализ EDA (ЛР4-5)")
+
+        self.tab_ml = QWidget()
+        self._setup_ml_tab(self.tab_ml)
+        self.tabs.addTab(self.tab_ml, "4. Классификация ML (ЛР6)")
 
     def _setup_dataset_tab(self, parent: QWidget) -> None:
         """Наполнение вкладки управления датасетом."""
@@ -179,6 +200,70 @@ class MainWindow(QMainWindow):
             "border: 1px solid #bdc3c7; background: #ffffff;"
         )
         layout.addWidget(self.chart_label)
+
+    def _setup_ml_tab(self, parent: QWidget) -> None:
+        """Наполнение вкладки классификации и оценки качества модели."""
+        layout = QVBoxLayout(parent)
+
+        model_grp = QGroupBox("Выбор обученной модели")
+        m_layout = QHBoxLayout(model_grp)
+        self.model_path_edit = QLineEdit(self.model_path_str)
+        self.model_path_edit.setReadOnly(True)
+        m_layout.addWidget(self.model_path_edit)
+
+        btn_load_model = QPushButton("Загрузить модель (.joblib)...")
+        btn_load_model.clicked.connect(self._select_model_file)
+        m_layout.addWidget(btn_load_model)
+        layout.addWidget(model_grp)
+
+        pred_grp = QGroupBox("Проверка классификации на новом отзыве")
+        p_layout = QVBoxLayout(pred_grp)
+
+        self.new_review_input = QTextEdit()
+        self.new_review_input.setMaximumHeight(100)
+        self.new_review_input.setPlaceholderText(
+            "Введите или вставьте текст нового отзыва для классификации..."
+        )
+        p_layout.addWidget(self.new_review_input)
+
+        p_btns = QHBoxLayout()
+        btn_sample_neg = QPushButton("Пример негатива")
+        btn_sample_neg.clicked.connect(self._fill_negative_sample)
+        p_btns.addWidget(btn_sample_neg)
+
+        btn_sample_pos = QPushButton("Пример позитива")
+        btn_sample_pos.clicked.connect(self._fill_positive_sample)
+        p_btns.addWidget(btn_sample_pos)
+
+        btn_predict = QPushButton("Предсказать оценку (Классифицировать)")
+        btn_predict.setStyleSheet("font-weight: bold; color: #27ae60;")
+        btn_predict.clicked.connect(self._run_single_prediction)
+        p_btns.addWidget(btn_predict)
+        p_layout.addLayout(p_btns)
+
+        self.pred_result_label = QLabel("Прогноз: ожидание ввода")
+        self.pred_result_label.setStyleSheet(
+            "font-size: 13px; font-weight: bold; color: #2c3e50;"
+        )
+        p_layout.addWidget(self.pred_result_label)
+        layout.addWidget(pred_grp)
+
+        eval_grp = QGroupBox(
+            "Оценка качества модели на демонстрационных данных"
+        )
+        e_layout = QVBoxLayout(eval_grp)
+
+        btn_eval_demo = QPushButton(
+            "Оценить качество на демо-выборке (demo_split.csv)"
+        )
+        btn_eval_demo.clicked.connect(self._evaluate_on_demo_data)
+        e_layout.addWidget(btn_eval_demo)
+
+        self.eval_report_area = QTextEdit()
+        self.eval_report_area.setReadOnly(True)
+        self.eval_report_area.setStyleSheet("font-family: monospace;")
+        e_layout.addWidget(self.eval_report_area)
+        layout.addWidget(eval_grp)
 
     def _select_dataset_folder(self) -> None:
         """Выбор папки датасета через диалог."""
@@ -293,6 +378,100 @@ class MainWindow(QMainWindow):
                     self.chart_label.width(), 380, Qt.KeepAspectRatio
                 )
             )
+
+    def _select_model_file(self) -> None:
+        """Диалог выбора файла модели .joblib."""
+        f_path, _ = QFileDialog.getOpenFileName(
+            self, "Выберите файл модели", "models", "Joblib (*.joblib)"
+        )
+        if not f_path:
+            return
+        try:
+            self.ml_model = load_model(f_path)
+            self.model_path_str = f_path
+            self.model_path_edit.setText(f_path)
+            QMessageBox.information(
+                self, "Успех", f"Модель успешно загружена:\n{f_path}"
+            )
+        except Exception as err:
+            QMessageBox.critical(
+                self, "Ошибка загрузки", f"Не удалось загрузить: {err}"
+            )
+
+    def _fill_negative_sample(self) -> None:
+        """Заполняет поле текстом негативного отзыва."""
+        self.new_review_input.setPlainText(
+            "Ужасный обман! Заблокировали карту и списали деньги без причины, "
+            "поддержка на сайте не отвечает сутками, сплошные проблемы."
+        )
+
+    def _fill_positive_sample(self) -> None:
+        """Заполняет поле текстом позитивного отзыва."""
+        self.new_review_input.setPlainText(
+            "Отличное отделение! Вежливый сотрудник помог быстро оформить "
+            "кредит и открыть новый счёт. Очень доволен обслуживанием!"
+        )
+
+    def _run_single_prediction(self) -> None:
+        """Запускает классификацию введенного отзыва."""
+        if self.ml_model is None:
+            QMessageBox.warning(
+                self, "Внимание", "Сначала загрузите обученную модель!"
+            )
+            return
+
+        raw_text = self.new_review_input.toPlainText().strip()
+        if not raw_text:
+            QMessageBox.warning(
+                self, "Внимание", "Введите текст отзыва для проверки!"
+            )
+            return
+
+        pred, probs, lemmas = predict_single_review(self.ml_model, raw_text)
+        if pred == 0:
+            self.pred_result_label.setText(
+                "Недостаточно значимых слов после очистки от стоп-слов."
+            )
+            return
+
+        probs_str = " | ".join(
+            f"★{k}: {v * 100:.1f}%" for k, v in sorted(probs.items())
+        )
+        result_text = (
+            f"Прогноз модели: ★ {pred}   [{probs_str}]\n"
+            f"Леммы: {lemmas[:70]}..."
+        )
+        self.pred_result_label.setText(result_text)
+
+    def _evaluate_on_demo_data(self) -> None:
+        """Оценивает качество модели на демонстрационной выборке."""
+        if self.ml_model is None:
+            QMessageBox.warning(
+                self, "Внимание", "Сначала загрузите обученную модель!"
+            )
+            return
+
+        demo_csv = Path("data/demo_split.csv")
+        if not demo_csv.exists():
+            f_path, _ = QFileDialog.getOpenFileName(
+                self, "Выберите CSV демо-выборки", "", "CSV (*.csv)"
+            )
+            if not f_path:
+                return
+            demo_csv = Path(f_path)
+
+        demo_df = pd.read_csv(demo_csv)
+        demo_df = demo_df.dropna(subset=["clean_text", "rating"])
+        res = evaluate_model(self.ml_model, demo_df)
+
+        output = (
+            f"Файл выборки: {demo_csv.name} (Записей: {len(demo_df)})\n"
+            f"Accuracy (Точность): {res['accuracy']:.4f}\n"
+            f"F1-Score (Weighted): {res['f1_weighted']:.4f}\n\n"
+            f"--- Полный отчет классификации (Classification Report) ---\n"
+            f"{res['report']}"
+        )
+        self.eval_report_area.setPlainText(output)
 
 
 if __name__ == "__main__":
