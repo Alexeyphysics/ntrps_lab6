@@ -34,7 +34,7 @@ def split_dataset_three_way(
     Применяет стратификацию по оценкам (rating) для сохранения баланса.
 
     :param df: Подготовленный DataFrame с колонками rating и clean_text.
-    :param train_ratio: Доля тренировочной выборки (остаток пополам на val/demo).
+    :param train_ratio: Доля тренировочной выборки.
     :param random_state: Зерно генератора случайных чисел.
     :return: Кортеж (train_df, val_df, demo_df).
     """
