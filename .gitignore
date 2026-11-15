@@ -1,0 +1,13 @@
+venv/
+venv_win/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+.vscode/
+*.png
+dataset_class/
+dataset_random/
+build/
+dist/
